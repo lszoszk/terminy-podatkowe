@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kalkulator terminów podatkowych</title>
+<style>
+  :root { --bg:#f6f5f1; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e2e0da; --accent:#0b5cad; --warn:#9a5b00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#151517; --card:#1f1f22; --ink:#f2f2f2; --muted:#a0a0a6; --line:#333338; --accent:#6aa9ff; --warn:#f0b35a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.6rem; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:16px; }
+  label { display:block; font-weight:600; margin:0 0 6px; }
+  select, input { width:100%; font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--ink); margin-bottom:14px; }
+  .result { font-size:1.5rem; font-weight:700; color:var(--accent); margin:4px 0; }
+  .note { color:var(--muted); font-size:.92rem; }
+  .shift { color:var(--warn); font-size:.95rem; }
+  .basis { font-size:.9rem; color:var(--muted); margin-top:8px; }
+  footer { color:var(--muted); font-size:.85rem; margin-top:24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kalkulator terminów podatkowych</h1>
+  <p class="sub">Ordynacja podatkowa i postępowanie przed sądami administracyjnymi</p>
+
+  <div class="card">
+    <label for="kind">Czynność</label>
+    <select id="kind">
+      <option value="odw">Odwołanie od decyzji (14 dni)</option>
+      <option value="zaz">Zażalenie na postanowienie (7 dni)</option>
+      <option value="wsa">Skarga do WSA (30 dni)</option>
+      <option value="nsa">Skarga kasacyjna do NSA (30 dni)</option>
+      <option value="prz">Przedawnienie zobowiązania podatkowego</option>
+    </select>
+    <label for="date" id="dateLabel">Data doręczenia</label>
+    <input type="date" id="date">
+  </div>
+
+  <div class="card" id="out" aria-live="polite">
+    <p class="note">Wybierz czynność i datę.</p>
+  </div>
+
+  <footer>Demonstracja zbudowana na żywo z Claude. Narzędzie nie uwzględnia zawieszenia ani przerwania biegu terminów i nie jest poradą prawną; wynik zawsze sprawdź w przepisach.</footer>
+</main>
+<script>
+const KINDS = {
+  odw: { days:14, label:"Data doręczenia decyzji", basis:"art. 223 § 2 pkt 1 i art. 12 § 5 Ordynacji podatkowej" },
+  zaz: { days:7,  label:"Data doręczenia postanowienia", basis:"art. 236 § 2 pkt 1 i art. 12 § 5 Ordynacji podatkowej" },
+  wsa: { days:30, label:"Data doręczenia decyzji organu II instancji", basis:"art. 53 § 1 i art. 83 § 1 p.p.s.a. w zw. z art. 115 k.c." },
+  nsa: { days:30, label:"Data doręczenia wyroku z uzasadnieniem", basis:"art. 177 § 1 i art. 83 § 1 p.p.s.a. w zw. z art. 115 k.c." },
+  prz: { label:"Termin płatności podatku", basis:"art. 70 § 1 Ordynacji podatkowej" }
+};
+
+function easter(y) {
+  const a=y%19, b=Math.floor(y/100), c=y%100, d=Math.floor(b/4), e=b%4, f=Math.floor((b+8)/25),
+        g=Math.floor((b-f+1)/3), h=(19*a+b-d-g+15)%30, i=Math.floor(c/4), k=c%4,
+        l=(32+2*e+2*i-h-k)%7, m=Math.floor((a+11*h+22*l)/114),
+        month=Math.floor((h+l-7*m+114)/31), day=((h+l-7*m+114)%31)+1;
+  return new Date(Date.UTC(y, month-1, day));
+}
+const key = d => d.toISOString().slice(0,10);
+const addDays = (d, n) => new Date(d.getTime() + n*86400000);
+
+function holidays(y) {
+  const fixed = ["01-01","01-06","05-01","05-03","08-15","11-01","11-11","12-25","12-26"];
+  if (y >= 2025) fixed.push("12-24");
+  const set = new Map(fixed.map(md => [`${y}-${md}`, ""]));
+  const names = { "01-01":"Nowy Rok","01-06":"Trzech Króli","05-01":"Święto Pracy","05-03":"Święto Konstytucji 3 Maja",
+    "08-15":"Wniebowzięcie NMP","11-01":"Wszystkich Świętych","11-11":"Święto Niepodległości",
+    "12-24":"Wigilia","12-25":"Boże Narodzenie","12-26":"drugi dzień Bożego Narodzenia" };
+  fixed.forEach(md => set.set(`${y}-${md}`, names[md]));
+  const e = easter(y);
+  set.set(key(e), "Wielkanoc");
+  set.set(key(addDays(e,1)), "Poniedziałek Wielkanocny");
+  set.set(key(addDays(e,49)), "Zielone Świątki");
+  set.set(key(addDays(e,60)), "Boże Ciało");
+  return set;
+}
+function freeDayName(d) {
+  const h = holidays(d.getUTCFullYear()).get(key(d));
+  if (h) return h;
+  const wd = d.getUTCDay();
+  if (wd === 6) return "sobota";
+  if (wd === 0) return "niedziela";
+  return null;
+}
+const fmt = d => d.toLocaleDateString("pl-PL", { weekday:"long", day:"numeric", month:"long", year:"numeric", timeZone:"UTC" });
+
+function render() {
+  const kind = document.getElementById("kind").value;
+  const k = KINDS[kind];
+  document.getElementById("dateLabel").textContent = k.label;
+  const v = document.getElementById("date").value;
+  const out = document.getElementById("out");
+  if (!v) { out.innerHTML = '<p class="note">Wybierz czynność i datę.</p>'; return; }
+  const start = new Date(v + "T00:00:00Z");
+
+  if (kind === "prz") {
+    const end = new Date(Date.UTC(start.getUTCFullYear() + 5, 11, 31));
+    const left = Math.ceil((end - new Date(Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()))) / 86400000);
+    out.innerHTML = `<p class="note">Zobowiązanie przedawnia się z upływem</p>
+      <p class="result">${fmt(end)}</p>
+      <p class="note">${left >= 0 ? `Zostało ${left} dni.` : `Przedawnione ${-left} dni temu.`} Pięć lat liczy się od końca roku, w którym upłynął termin płatności.</p>
+      <p class="basis">Podstawa: ${k.basis}</p>`;
+    return;
+  }
+
+  const nominal = addDays(start, k.days);
+  let end = nominal, skipped = [];
+  for (let n; (n = freeDayName(end)); end = addDays(end, 1)) skipped.push(`${end.toLocaleDateString("pl-PL",{timeZone:"UTC"})} (${n})`);
+  out.innerHTML = `<p class="note">Ostatni dzień na wniesienie</p>
+    <p class="result">${fmt(end)}</p>
+    ${skipped.length ? `<p class="shift">Termin przesunięty, bo wypadał w dzień wolny: ${skipped.join(", ")}.</p>` : ""}
+    <p class="note">Dzień doręczenia nie wlicza się do terminu; ${k.days} dni liczone od dnia następnego.</p>
+    <p class="basis">Podstawa: ${k.basis}</p>`;
+}
+document.getElementById("kind").addEventListener("change", render);
+document.getElementById("date").addEventListener("input", render);
+document.getElementById("date").value = new Date().toISOString().slice(0,10);
+render();
+</script>
+</body>
+</html>
